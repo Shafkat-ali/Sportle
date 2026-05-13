@@ -7,6 +7,7 @@ const app = express();
 const cache = new NodeCache();
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
+console.log('API KEY loaded:', RAPIDAPI_KEY ? 'YES' : 'NO - KEY IS MISSING');
 const RAPIDAPI_HOST = 'free-api-live-football-data.p.rapidapi.com';
 
 // Helper: fetch from API-Football with caching
