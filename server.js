@@ -28,6 +28,15 @@ async function fetchWithCache(url, params, ttlSeconds) {
 }
 
 // Fixtures endpoint
+
+app.get('/', (req, res) => {
+  res.json({ 
+    app: 'Sportle',
+    status: 'running',
+    endpoints: ['/fixtures', '/standings', '/live']
+  });
+});
+
 app.get('/fixtures', async (req, res) => {
   try {
     const data = await fetchWithCache(
