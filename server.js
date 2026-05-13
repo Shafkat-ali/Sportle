@@ -85,7 +85,12 @@ app.get('/fixtures', async (req, res) => {
 
 app.get('/fixtures/today', async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(now.getUTCDate()).padStart(2, '0');
+    const today = `${year}${month}${day}`;
+    
     const data = await fetchWithCache(
       `${BASE}/football-get-matches-by-date`,
       { date: today },
