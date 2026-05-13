@@ -119,9 +119,10 @@ app.get('/standings', async (req, res) => {
 // ── Teams ─────────────────────────────────────────────────────────────
 app.get('/teams', async (req, res) => {
   try {
+    const leagueId = req.query.leagueId || WORLD_CUP_ID;
     const data = await fetchWithCache(
       `${BASE}/football-get-list-all-team`,
-      { leagueid: WORLD_CUP_ID },
+      { leagueid: leagueId },
       86400
     );
     res.json(data);
