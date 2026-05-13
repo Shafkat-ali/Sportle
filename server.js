@@ -1,20 +1,30 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const NodeCache = require('node-cache');
+const { Redis } = require('@upstash/redis');
 
 const app = express();
-const cache = new NodeCache();
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'free-api-live-football-data.p.rapidapi.com';
 const WORLD_CUP_ID = 77;
+const BASE = `https://${RAPIDAPI_HOST}`;
 
 async function fetchWithCache(url, params, ttlSeconds) {
-  const cacheKey = url + JSON.stringify(params);
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
+  const cacheKey = 'sportle:' + url + JSON.stringify(params);
 
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    console.log('CACHE HIT:', cacheKey);
+    return cached;
+  }
+
+  console.log('CACHE MISS:', url);
   const response = await axios.get(url, {
     params,
     headers: {
@@ -23,13 +33,11 @@ async function fetchWithCache(url, params, ttlSeconds) {
     },
   });
 
-  cache.set(cacheKey, response.data, ttlSeconds);
+  await redis.set(cacheKey, response.data, { ex: ttlSeconds });
   return response.data;
 }
 
-const BASE = `https://${RAPIDAPI_HOST}`;
-
-// ── Root ─────────────────────────────────────────────────────────────
+// ── Root ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
     app: 'Sportle',
@@ -213,53 +221,4 @@ app.get('/rounds', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-
-app.get('/debug', async (req, res) => {
-  const results = {};
-  
-  const attempts = [
-    { key: 'eventid', val: '5498260' },
-    { key: 'eventId', val: '5498260' },
-    { key: 'matchid', val: '5498260' },
-    { key: 'matchId', val: '5498260' },
-  ];
-
-  for (const a of attempts) {
-    try {
-      const r = await axios.get(`https://${RAPIDAPI_HOST}/football-get-match-all-stats`, {
-        params: { [a.key]: a.val },
-        headers: {
-          'x-rapidapi-key': RAPIDAPI_KEY,
-          'x-rapidapi-host': RAPIDAPI_HOST,
-        },
-      });
-      results[a.key] = r.data?.status || r.data;
-    } catch (e) {
-      results[a.key] = e.response?.data || e.message;
-    }
-  }
-
-  const roundAttempts = [
-    { key: 'leagueid', val: 77 },
-    { key: 'leagueId', val: 77 },
-    { key: 'leagueid', val: '77' },
-  ];
-
-  for (const a of roundAttempts) {
-    try {
-      const r = await axios.get(`https://${RAPIDAPI_HOST}/football-get-all-rounds`, {
-        params: { [a.key]: a.val },
-        headers: {
-          'x-rapidapi-key': RAPIDAPI_KEY,
-          'x-rapidapi-host': RAPIDAPI_HOST,
-        },
-      });
-      results[`rounds_${a.key}`] = r.data?.status || r.data;
-    } catch (e) {
-      results[`rounds_${a.key}`] = e.response?.data || e.message;
-    }
-  }
-
-  res.json(results);
-});
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
