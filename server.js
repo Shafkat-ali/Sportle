@@ -7,10 +7,9 @@ const app = express();
 const cache = new NodeCache();
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-console.log('API KEY loaded:', RAPIDAPI_KEY ? 'YES' : 'NO - KEY IS MISSING');
 const RAPIDAPI_HOST = 'free-api-live-football-data.p.rapidapi.com';
+const WORLD_CUP_ID = 77;
 
-// Helper: fetch from API-Football with caching
 async function fetchWithCache(url, params, ttlSeconds) {
   const cacheKey = url + JSON.stringify(params);
   const cached = cache.get(cacheKey);
@@ -28,54 +27,68 @@ async function fetchWithCache(url, params, ttlSeconds) {
   return response.data;
 }
 
-// Fixtures endpoint
-
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     app: 'Sportle',
     status: 'running',
     endpoints: ['/fixtures', '/standings', '/live']
   });
 });
 
-app.get('/fixtures', async (req, res) => {
-  try {
-    const data = await fetchWithCache(
-      `https://${RAPIDAPI_HOST}/football-get-all-fixtures-by-league-and-season`,
-      { leagueId: 1, season: '2026' },
-      3600 // cache 1 hour
-    );
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch fixtures' });
-  }
-});
-
-// Standings endpoint
-app.get('/standings', async (req, res) => {
-  try {
-    const data = await fetchWithCache(
-      `https://${RAPIDAPI_HOST}/football-get-standing-by-league-and-season`,
-      { leagueId: 1, season: '2026' },
-      900 // cache 15 min
-    );
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch standings' });
-  }
-});
-
-// Live scores endpoint
+// Live scores
 app.get('/live', async (req, res) => {
   try {
     const data = await fetchWithCache(
       `https://${RAPIDAPI_HOST}/football-current-live`,
       {},
-      30 // cache 30 seconds
+      30
     );
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch live scores' });
+    res.status(500).json({ error: 'Failed to fetch live scores', detail: err.message });
+  }
+});
+
+// Fixtures for World Cup (all matches)
+app.get('/fixtures', async (req, res) => {
+  try {
+    const data = await fetchWithCache(
+      `https://${RAPIDAPI_HOST}/football-get-all-matches-by-league`,
+      { leagueId : WORLD_CUP_ID },
+      3600
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch fixtures', detail: err.message });
+  }
+});
+
+// Fixtures by date (bonus — useful for daily schedule screen)
+app.get('/fixtures/today', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const data = await fetchWithCache(
+      `https://${RAPIDAPI_HOST}/football-get-matches-by-date`,
+      { date: today },
+      300
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch today fixtures', detail: err.message });
+  }
+});
+
+// Standings
+app.get('/standings', async (req, res) => {
+  try {
+    const data = await fetchWithCache(
+      `https://${RAPIDAPI_HOST}/football-get-standing-all`,
+      { leagueid: WORLD_CUP_ID },
+      900
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch standings', detail: err.message });
   }
 });
 
