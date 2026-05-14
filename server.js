@@ -134,9 +134,10 @@ app.get('/fixtures/league/:leagueId', async (req, res) => {
 // Standings
 app.get('/standings', async (req, res) => {
   try {
+    const leagueId = req.query.leagueId || WORLD_CUP_ID;
     const data = await fetchWithCache(
       `${BASE}/football-get-standing-all`,
-      { leagueId: WORLD_CUP_ID },
+      { leagueId: leagueId },
       900
     );
     res.json(data);
