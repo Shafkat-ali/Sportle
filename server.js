@@ -1,4 +1,5 @@
 require('dotenv').config();
+const https = require('https');
 const express = require('express');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
@@ -14,6 +15,7 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'free-api-live-football-data.p.rapidapi.com';
 const WORLD_CUP_ID = 77;
 const BASE = `https://${RAPIDAPI_HOST}`;
+
 
 async function fetchWithCache(url, params, ttlSeconds) {
   const cacheKey = 'sportle:' + url + JSON.stringify(params);
@@ -251,3 +253,91 @@ app.get('/rounds', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
+
+// Send push notification via Expo
+async function sendPushNotification(token, title, body) {
+  const message = {
+    to: token,
+    sound: 'default',
+    title,
+    body,
+    data: { type: 'match_alert' },
+  };
+
+  await axios.post('https://exp.host/--/api/v2/push/send', message, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+    },
+  });
+}
+
+// Check live matches and notify users with favorite teams
+async function checkAndNotify() {
+  try {
+    const liveData = await axios.get(`https://${RAPIDAPI_HOST}/football-current-live`, {
+      headers: {
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-host': RAPIDAPI_HOST,
+      },
+    });
+
+    const liveMatches = liveData.data?.response?.live || [];
+    if (liveMatches.length === 0) return;
+
+    // Get all favorites and push tokens from Supabase
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+
+    const { data: tokens } = await supabase.from('push_tokens').select('user_id, token');
+    if (!tokens || tokens.length === 0) return;
+
+    for (const { user_id, token } of tokens) {
+      const { data: favs } = await supabase
+        .from('favorites')
+        .select('team_id, team_name')
+        .eq('user_id', user_id);
+
+      if (!favs || favs.length === 0) continue;
+
+      const favTeamIds = new Set(favs.map(f => f.team_id));
+
+      for (const match of liveMatches) {
+        const homeId = match.home?.id;
+        const awayId = match.away?.id;
+        const homeName = match.home?.name;
+        const awayName = match.away?.name;
+        const homeScore = match.home?.score ?? 0;
+        const awayScore = match.away?.score ?? 0;
+        const minute = match.status?.liveTime?.short || 'Live';
+
+        if (favTeamIds.has(homeId) || favTeamIds.has(awayId)) {
+          const isKickoff = match.status?.liveTime?.long === '1:00' || minute === "1'";
+          
+          if (isKickoff) {
+            await sendPushNotification(
+              token,
+              'Match started!',
+              `${homeName} vs ${awayName} has kicked off`
+            );
+          } else {
+            await sendPushNotification(
+              token,
+              `${homeName} ${homeScore} - ${awayScore} ${awayName}`,
+              `${minute} — Live update`
+            );
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Notification job error:', err.message);
+  }
+}
+
+// Run every 2 minutes
+setInterval(checkAndNotify, 2 * 60 * 1000);
