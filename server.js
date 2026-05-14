@@ -435,4 +435,89 @@ app.get('/scorers', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch scorers', detail: err.message });
   }
 });
+
+
+app.use(express.json());
+
+app.post('/ai/chat', async (req, res) => {
+  try {
+    const { message, userId } = req.body;
+    if (!message || !userId) {
+      return res.status(400).json({ error: 'Message and userId required' });
+    }
+
+    const supabaseAdmin2 = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+
+    // Get or create token record
+    let { data: tokenRecord } = await supabaseAdmin2
+      .from('ai_tokens')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (!tokenRecord) {
+      const { data: newRecord } = await supabaseAdmin2
+        .from('ai_tokens')
+        .insert({ user_id: userId, free_tokens: 5, paid_tokens: 0, last_reset: new Date().toISOString().slice(0, 10) })
+        .select()
+        .single();
+      tokenRecord = newRecord;
+    }
+
+    // Reset free tokens if it's a new day
+    const today = new Date().toISOString().slice(0, 10);
+    if (tokenRecord.last_reset !== today) {
+      await supabaseAdmin2
+        .from('ai_tokens')
+        .update({ free_tokens: 5, last_reset: today })
+        .eq('user_id', userId);
+      tokenRecord.free_tokens = 5;
+    }
+
+    // Check if user has tokens
+    const totalTokens = tokenRecord.free_tokens + tokenRecord.paid_tokens;
+    if (totalTokens <= 0) {
+      return res.status(402).json({ error: 'No tokens remaining', code: 'NO_TOKENS' });
+    }
+
+    // Deduct token
+    if (tokenRecord.paid_tokens > 0) {
+      await supabaseAdmin2
+        .from('ai_tokens')
+        .update({ paid_tokens: tokenRecord.paid_tokens - 1 })
+        .eq('user_id', userId);
+    } else {
+      await supabaseAdmin2
+        .from('ai_tokens')
+        .update({ free_tokens: tokenRecord.free_tokens - 1 })
+        .eq('user_id', userId);
+    }
+
+    // Call Claude API
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      system: 'You are Sportle AI, a soccer expert assistant. You answer questions about soccer, football matches, players, teams, tactics, World Cup 2026, and fantasy football. Keep answers concise, enthusiastic, and insightful. Never answer questions unrelated to soccer or sports.',
+      messages: [{ role: 'user', content: message }],
+    }, {
+      headers: {
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+    });
+
+    const answer = response.data.content[0].text;
+    const remaining = totalTokens - 1;
+
+    res.json({ answer, remaining });
+  } catch (err) {
+    console.error('AI chat error:', err.message);
+    res.status(500).json({ error: 'AI chat failed', detail: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
