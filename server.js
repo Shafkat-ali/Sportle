@@ -227,4 +227,18 @@ app.get('/rounds', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Fixtures by league
+app.get('/fixtures/league/:leagueId', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const data = await fetchWithCache(
+      `${BASE}/football-get-matches-by-date-and-league`,
+      { date: today, leagueId: req.params.leagueId },
+      300
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
