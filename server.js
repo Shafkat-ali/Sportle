@@ -389,4 +389,18 @@ setInterval(checkAndNotify, 2 * 60 * 1000);
 // ─── Start Server ──────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
+
+app.get('/scorers', async (req, res) => {
+  try {
+    const leagueId = req.query.leagueId || WORLD_CUP_ID;
+    const data = await fetchWithCache(
+      `${BASE}/football-get-top-players-by-league`,
+      { leagueid: leagueId },
+      3600
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch scorers', detail: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
