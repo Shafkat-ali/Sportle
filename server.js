@@ -131,6 +131,37 @@ app.get('/fixtures/league/:leagueId', async (req, res) => {
   }
 });
 
+app.get('/matches/range', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const dates = [];
+    let current = new Date(startDate);
+    const end = new Date(endDate);
+    while (current <= end) {
+      dates.push(current.toISOString().slice(0, 10).replace(/-/g, ''));
+      current.setDate(current.getDate() + 1);
+    }
+    const results = await Promise.all(
+      dates.map(date =>
+        fetchWithCache(
+          `${BASE}/football-get-matches-by-date`,
+          { date },
+          300
+        ).then(data => ({
+          date,
+          matches: data.response?.matches || []
+        })).catch(() => ({ date, matches: [] }))
+      )
+    );
+    const grouped = results
+      .filter(r => r.matches.length > 0)
+      .map(r => ({ date: r.date, matches: r.matches }));
+    res.json({ status: 'success', response: { grouped } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch match range', detail: err.message });
+  }
+});
+
 // Standings
 app.get('/standings', async (req, res) => {
   try {
