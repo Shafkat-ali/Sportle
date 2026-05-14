@@ -1,8 +1,8 @@
 require('dotenv').config();
-const https = require('https');
 const express = require('express');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 
@@ -16,6 +16,10 @@ const RAPIDAPI_HOST = 'free-api-live-football-data.p.rapidapi.com';
 const WORLD_CUP_ID = 77;
 const BASE = `https://${RAPIDAPI_HOST}`;
 
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 async function fetchWithCache(url, params, ttlSeconds) {
   const cacheKey = 'sportle:' + url + JSON.stringify(params);
@@ -251,29 +255,61 @@ app.get('/rounds', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
+// ─── Push Notifications ────────────────────────────────────────────────────
 
-// Send push notification via Expo
-async function sendPushNotification(token, title, body) {
-  const message = {
-    to: token,
-    sound: 'default',
-    title,
-    body,
-    data: { type: 'match_alert' },
+async function generateEmotionalMessage(eventType, homeName, awayName, homeScore, awayScore, minute) {
+  const prompts = {
+    kickoff: `Write a short, exciting push notification (max 12 words) for a soccer match starting now: ${homeName} vs ${awayName}. Make it feel like a big event is beginning. No emojis.`,
+    goal: `Write a short, emotional push notification (max 12 words) for a goal in minute ${minute}: ${homeName} ${homeScore}-${awayScore} ${awayName}. Make it dramatic. No emojis.`,
+    halftime: `Write a short push notification (max 12 words) for halftime: ${homeName} ${homeScore}-${awayScore} ${awayName}. Capture the tension. No emojis.`,
+    fulltime: `Write a short, emotional push notification (max 12 words) for full time: ${homeName} ${homeScore}-${awayScore} ${awayName}. Make it feel significant. No emojis.`,
   };
 
-  await axios.post('https://exp.host/--/api/v2/push/send', message, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Accept-Encoding': 'gzip, deflate',
-    },
-  });
+  try {
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 60,
+      messages: [{ role: 'user', content: prompts[eventType] }],
+    }, {
+      headers: {
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+    });
+    return response.data.content[0].text.trim();
+  } catch (e) {
+    const fallbacks = {
+      kickoff: `${homeName} vs ${awayName} has kicked off`,
+      goal: `Goal! ${homeName} ${homeScore} - ${awayScore} ${awayName}`,
+      halftime: `Half time: ${homeName} ${homeScore} - ${awayScore} ${awayName}`,
+      fulltime: `Full time: ${homeName} ${homeScore} - ${awayScore} ${awayName}`,
+    };
+    return fallbacks[eventType];
+  }
 }
 
-// Check live matches and notify users with favorite teams
+async function sendPushNotification(token, title, body) {
+  try {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
+      to: token,
+      sound: 'default',
+      title,
+      body,
+      data: { type: 'match_alert' },
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+  } catch (err) {
+    console.error('Push send error:', err.message);
+  }
+}
+
+const notifiedEvents = new Set();
+
 async function checkAndNotify() {
   try {
     const liveData = await axios.get(`https://${RAPIDAPI_HOST}/football-current-live`, {
@@ -286,51 +322,60 @@ async function checkAndNotify() {
     const liveMatches = liveData.data?.response?.live || [];
     if (liveMatches.length === 0) return;
 
-    // Get all favorites and push tokens from Supabase
-    const { createClient } = require('@supabase/supabase-js');
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY
-    );
-
-    const { data: tokens } = await supabase.from('push_tokens').select('user_id, token');
+    const { data: tokens } = await supabaseAdmin.from('push_tokens').select('user_id, token');
     if (!tokens || tokens.length === 0) return;
 
     for (const { user_id, token } of tokens) {
-      const { data: favs } = await supabase
+      const { data: favs } = await supabaseAdmin
         .from('favorites')
         .select('team_id, team_name')
         .eq('user_id', user_id);
 
       if (!favs || favs.length === 0) continue;
-
       const favTeamIds = new Set(favs.map(f => f.team_id));
 
       for (const match of liveMatches) {
         const homeId = match.home?.id;
         const awayId = match.away?.id;
-        const homeName = match.home?.name;
-        const awayName = match.away?.name;
+        if (!favTeamIds.has(homeId) && !favTeamIds.has(awayId)) continue;
+
+        const homeName = match.home?.name || 'Home';
+        const awayName = match.away?.name || 'Away';
         const homeScore = match.home?.score ?? 0;
         const awayScore = match.away?.score ?? 0;
-        const minute = match.status?.liveTime?.short || 'Live';
+        const minute = match.status?.liveTime?.short || '';
+        const matchId = match.id;
 
-        if (favTeamIds.has(homeId) || favTeamIds.has(awayId)) {
-          const isKickoff = match.status?.liveTime?.long === '1:00' || minute === "1'";
-          
-          if (isKickoff) {
-            await sendPushNotification(
-              token,
-              'Match started!',
-              `${homeName} vs ${awayName} has kicked off`
-            );
-          } else {
-            await sendPushNotification(
-              token,
-              `${homeName} ${homeScore} - ${awayScore} ${awayName}`,
-              `${minute} — Live update`
-            );
-          }
+        // Kickoff
+        const kickoffKey = `${matchId}-kickoff`;
+        if (!notifiedEvents.has(kickoffKey) && minute === "1'") {
+          const body = await generateEmotionalMessage('kickoff', homeName, awayName, homeScore, awayScore, minute);
+          await sendPushNotification(token, 'Match starting', body);
+          notifiedEvents.add(kickoffKey);
+        }
+
+        // Goal - detect score change
+        const scoreKey = `${matchId}-${homeScore}-${awayScore}`;
+        if (!notifiedEvents.has(scoreKey) && (homeScore > 0 || awayScore > 0)) {
+          const body = await generateEmotionalMessage('goal', homeName, awayName, homeScore, awayScore, minute);
+          await sendPushNotification(token, `${homeName} ${homeScore} - ${awayScore} ${awayName}`, body);
+          notifiedEvents.add(scoreKey);
+        }
+
+        // Halftime
+        const halftimeKey = `${matchId}-halftime`;
+        if (!notifiedEvents.has(halftimeKey) && match.status?.halftime === true) {
+          const body = await generateEmotionalMessage('halftime', homeName, awayName, homeScore, awayScore, minute);
+          await sendPushNotification(token, 'Half time', body);
+          notifiedEvents.add(halftimeKey);
+        }
+
+        // Full time
+        const fulltimeKey = `${matchId}-fulltime`;
+        if (!notifiedEvents.has(fulltimeKey) && match.status?.finished === true) {
+          const body = await generateEmotionalMessage('fulltime', homeName, awayName, homeScore, awayScore, minute);
+          await sendPushNotification(token, 'Full time', body);
+          notifiedEvents.add(fulltimeKey);
         }
       }
     }
@@ -339,5 +384,9 @@ async function checkAndNotify() {
   }
 }
 
-// Run every 2 minutes
 setInterval(checkAndNotify, 2 * 60 * 1000);
+
+// ─── Start Server ──────────────────────────────────────────────────────────
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
