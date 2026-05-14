@@ -231,11 +231,40 @@ const PORT = process.env.PORT || 3000;
 app.get('/fixtures/league/:leagueId', async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const data = await fetchWithCache(
+    const leagueId = parseInt(req.params.leagueId);
+
+    // Try the league-specific endpoint first
+    const leagueData = await fetchWithCache(
       `${BASE}/football-get-matches-by-date-and-league`,
-      { date: today, leagueId: req.params.leagueId },
+      { date: today, leagueId: leagueId },
       300
     );
+
+    let matches = [];
+
+    if (Array.isArray(leagueData.response)) {
+      const league = leagueData.response.find(l => l.id === leagueId);
+      if (league && Array.isArray(league.matches)) {
+        matches = league.matches;
+      }
+    }
+
+    // If no matches found, fall back to filtering from all today's matches
+    if (matches.length === 0) {
+      const allData = await fetchWithCache(
+        `${BASE}/football-get-matches-by-date`,
+        { date: today },
+        300
+      );
+      const all = allData.response?.matches || [];
+      matches = all.filter(m => m.leagueId === leagueId);
+    }
+
+    res.json({ status: 'success', response: { matches } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
+  }
+});
 
     // API returns array of league objects each with matches array
     // Find the matching league and extract its matches
