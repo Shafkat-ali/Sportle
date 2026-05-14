@@ -17,13 +17,11 @@ const BASE = `https://${RAPIDAPI_HOST}`;
 
 async function fetchWithCache(url, params, ttlSeconds) {
   const cacheKey = 'sportle:' + url + JSON.stringify(params);
-
   const cached = await redis.get(cacheKey);
   if (cached) {
     console.log('CACHE HIT:', cacheKey);
     return cached;
   }
-
   console.log('CACHE MISS:', url);
   const response = await axios.get(url, {
     params,
@@ -32,34 +30,26 @@ async function fetchWithCache(url, params, ttlSeconds) {
       'x-rapidapi-host': RAPIDAPI_HOST,
     },
   });
-
   await redis.set(cacheKey, response.data, { ex: ttlSeconds });
   return response.data;
 }
 
-// ── Root ──────────────────────────────────────────────────────────────
+// Root
 app.get('/', (req, res) => {
   res.json({
     app: 'Sportle',
     status: 'running',
     endpoints: [
-      '/live',
-      '/fixtures',
-      '/fixtures/today',
-      '/standings',
-      '/teams',
-      '/teams/:teamId',
-      '/teams/:teamId/players',
-      '/players/:playerId',
-      '/matches/:matchId',
-      '/matches/:matchId/stats',
-      '/matches/:matchId/lineups',
-      '/rounds',
+      '/live', '/fixtures', '/fixtures/today',
+      '/fixtures/league/:leagueId', '/standings',
+      '/teams', '/teams/:teamId', '/teams/:teamId/players',
+      '/players/:playerId', '/matches/:matchId',
+      '/matches/:matchId/stats', '/matches/:matchId/lineups', '/rounds',
     ]
   });
 });
 
-// ── Live scores ───────────────────────────────────────────────────────
+// Live scores
 app.get('/live', async (req, res) => {
   try {
     const data = await fetchWithCache(`${BASE}/football-current-live`, {}, 30);
@@ -69,7 +59,7 @@ app.get('/live', async (req, res) => {
   }
 });
 
-// ── Fixtures ──────────────────────────────────────────────────────────
+// Fixtures - World Cup
 app.get('/fixtures', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -83,14 +73,10 @@ app.get('/fixtures', async (req, res) => {
   }
 });
 
+// Fixtures - today all leagues
 app.get('/fixtures/today', async (req, res) => {
   try {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(now.getUTCDate()).padStart(2, '0');
-    const today = `${year}${month}${day}`;
-    
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const data = await fetchWithCache(
       `${BASE}/football-get-matches-by-date`,
       { date: today },
@@ -102,7 +88,44 @@ app.get('/fixtures/today', async (req, res) => {
   }
 });
 
-// ── Standings ─────────────────────────────────────────────────────────
+// Fixtures - by league with fallback
+app.get('/fixtures/league/:leagueId', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const leagueId = parseInt(req.params.leagueId);
+
+    const leagueData = await fetchWithCache(
+      `${BASE}/football-get-matches-by-date-and-league`,
+      { date: today, leagueId: leagueId },
+      300
+    );
+
+    let matches = [];
+
+    if (Array.isArray(leagueData.response)) {
+      const league = leagueData.response.find(l => l.id === leagueId);
+      if (league && Array.isArray(league.matches)) {
+        matches = league.matches;
+      }
+    }
+
+    if (matches.length === 0) {
+      const allData = await fetchWithCache(
+        `${BASE}/football-get-matches-by-date`,
+        { date: today },
+        300
+      );
+      const all = allData.response?.matches || [];
+      matches = all.filter(m => m.leagueId === leagueId);
+    }
+
+    res.json({ status: 'success', response: { matches } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
+  }
+});
+
+// Standings
 app.get('/standings', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -116,7 +139,7 @@ app.get('/standings', async (req, res) => {
   }
 });
 
-// ── Teams ─────────────────────────────────────────────────────────────
+// Teams
 app.get('/teams', async (req, res) => {
   try {
     const leagueId = req.query.leagueId || WORLD_CUP_ID;
@@ -144,7 +167,7 @@ app.get('/teams/:teamId', async (req, res) => {
   }
 });
 
-// ── Players ───────────────────────────────────────────────────────────
+// Players
 app.get('/teams/:teamId/players', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -171,7 +194,7 @@ app.get('/players/:playerId', async (req, res) => {
   }
 });
 
-// ── Match detail ──────────────────────────────────────────────────────
+// Match detail
 app.get('/matches/:matchId', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -185,7 +208,7 @@ app.get('/matches/:matchId', async (req, res) => {
   }
 });
 
-// ── Match stats ───────────────────────────────────────────────────────
+// Match stats
 app.get('/matches/:matchId/stats', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -199,7 +222,7 @@ app.get('/matches/:matchId/stats', async (req, res) => {
   }
 });
 
-// ── Match lineups ─────────────────────────────────────────────────────
+// Match lineups
 app.get('/matches/:matchId/lineups', async (req, res) => {
   try {
     const [home, away] = await Promise.all([
@@ -212,7 +235,7 @@ app.get('/matches/:matchId/lineups', async (req, res) => {
   }
 });
 
-// ── Rounds ────────────────────────────────────────────────────────────
+// Rounds
 app.get('/rounds', async (req, res) => {
   try {
     const data = await fetchWithCache(
@@ -227,62 +250,4 @@ app.get('/rounds', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-// Fixtures by league
-app.get('/fixtures/league/:leagueId', async (req, res) => {
-  try {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const leagueId = parseInt(req.params.leagueId);
-
-    // Try the league-specific endpoint first
-    const leagueData = await fetchWithCache(
-      `${BASE}/football-get-matches-by-date-and-league`,
-      { date: today, leagueId: leagueId },
-      300
-    );
-
-    let matches = [];
-
-    if (Array.isArray(leagueData.response)) {
-      const league = leagueData.response.find(l => l.id === leagueId);
-      if (league && Array.isArray(league.matches)) {
-        matches = league.matches;
-      }
-    }
-
-    // If no matches found, fall back to filtering from all today's matches
-    if (matches.length === 0) {
-      const allData = await fetchWithCache(
-        `${BASE}/football-get-matches-by-date`,
-        { date: today },
-        300
-      );
-      const all = allData.response?.matches || [];
-      matches = all.filter(m => m.leagueId === leagueId);
-    }
-
-    res.json({ status: 'success', response: { matches } });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
-  }
-});
-
-    // API returns array of league objects each with matches array
-    // Find the matching league and extract its matches
-    const leagueId = parseInt(req.params.leagueId);
-    let matches = [];
-
-    if (Array.isArray(data.response)) {
-      const league = data.response.find(l => l.id === leagueId);
-      if (league && Array.isArray(league.matches)) {
-        matches = league.matches;
-      }
-    } else if (data.response?.matches) {
-      matches = data.response.matches;
-    }
-
-    res.json({ status: 'success', response: { matches } });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
-  }
-});
 app.listen(PORT, () => console.log(`Sportle backend running on port ${PORT}`));
