@@ -236,7 +236,22 @@ app.get('/fixtures/league/:leagueId', async (req, res) => {
       { date: today, leagueId: req.params.leagueId },
       300
     );
-    res.json(data);
+
+    // API returns array of league objects each with matches array
+    // Find the matching league and extract its matches
+    const leagueId = parseInt(req.params.leagueId);
+    let matches = [];
+
+    if (Array.isArray(data.response)) {
+      const league = data.response.find(l => l.id === leagueId);
+      if (league && Array.isArray(league.matches)) {
+        matches = league.matches;
+      }
+    } else if (data.response?.matches) {
+      matches = data.response.matches;
+    }
+
+    res.json({ status: 'success', response: { matches } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch league fixtures', detail: err.message });
   }
