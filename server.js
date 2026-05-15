@@ -65,6 +65,19 @@ app.get('/live', async (req, res) => {
   }
 });
 
+app.get('/debug/leagues', async (req, res) => {
+  try {
+    const data = await fetchWithCache(
+      `${BASE}/football-get-all-leagues`,
+      {},
+      86400
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Fixtures - World Cup
 app.get('/fixtures', async (req, res) => {
   try {
